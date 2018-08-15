@@ -1,3 +1,5 @@
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.select.Elements;
@@ -10,22 +12,29 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class CrawlerDriver {
-    private static final ExecutorService POOL;
-    final Set<String> linkSet = new ConcurrentSkipListSet<>();
-    final Set<String> visitedLinkSet = new ConcurrentSkipListSet<>();
-
-    static {
-        int noOFThreads = Runtime.getRuntime().availableProcessors();
-        POOL = Executors.newFixedThreadPool(noOFThreads * 2);
-    }
+    private final Set<String> linkSet = new ConcurrentSkipListSet<>();
+    private final Set<String> visitedLinkSet = new ConcurrentSkipListSet<>();
+    private static final Logger LOG = LogManager.getLogger("consoleLogger");
+    private static final int MAX_THREADS = Runtime.getRuntime().availableProcessors();
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(MAX_THREADS * 2);
 
     public static void main(String[] args) {
         CrawlerDriver cd = new CrawlerDriver();
         cd.startCrawling("https://github.com/soumodeep3007/Node-Test");
-        cd.crawlFromLinks();
-        // POOL.shutdown();
+        try{
+            POOL.awaitTermination(1, TimeUnit.MINUTES);
+            cd.crawlFromLinks();
+            POOL.awaitTermination(1, TimeUnit.MINUTES);
+        }catch (InterruptedException ie){
+            LOG.error(ie.getMessage());
+        }finally {
+           POOL.shutdown();
+        }
+
+
     }
 
     public void startCrawling(String url) {
@@ -36,15 +45,17 @@ public class CrawlerDriver {
         if (url != null && url.contains("soumodeep3007") && url.contains("Node-Test") && !visitedLinkSet.contains(url)) {
             try {
                 // need http protocol
-                System.out.println("startCrawling called with url " + url);
+                LOG.info("startCrawling called with url " + url);
                 visitedLinkSet.add(url);
                 doc = Jsoup.connect(url).get();
                 populateAllLinks(doc, linkSet);
-                linkSet.forEach(link -> {
-                    startCrawling(link);
-                });
+                linkSet.forEach(
+                        link -> {
+                            POOL.submit(() -> startCrawling(link));
+                        }
+                );
             } catch (IOException e) {
-                // e.printStackTrace();
+                LOG.error(e.getMessage());
             }
         } else {
             return;
@@ -57,7 +68,6 @@ public class CrawlerDriver {
         Elements links = doc.select("a[href]");
         links.forEach(link -> {
             String url = link.attr("href");
-            // System.out.println("\nlink : " + url);
             if (url.contains("soumodeep3007") && url.contains("Node-Test")) {
                 if (!url.startsWith("https://")) {
                     url = "https://github.com" + url;
@@ -68,26 +78,26 @@ public class CrawlerDriver {
     }
 
     private void crawlFromLinks() {
-        System.out.println("All links parsed");
+        LOG.info("All links parsed");
         linkSet.forEach(link -> {
-           // POOL.submit(() -> {
-                try {
-                    Document doc = Jsoup.connect(link).get();
-                    writeFileToDisk(doc.html());
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-         //   });
+           POOL.submit(() -> {
+            try {
+                Document doc = Jsoup.connect(link).get();
+                writeFileToDisk(doc.html());
+            } catch (IOException e) {
+               LOG.error(e.getMessage());
+            }
+            });
         });
     }
 
     private void writeFileToDisk(String html) {
-        System.out.println("Started writing to disk");
+        LOG.info("Started writing to disk");
         try {
-            html += "========================================NEW PAGE========================================";
+            html += "\n========================================NEW PAGE========================================\n";
             Files.write(Paths.get("D:\\crawled_data.txt"), html.getBytes(), StandardOpenOption.APPEND);
         } catch (IOException e) {
-            e.printStackTrace();
+           LOG.error(e.getMessage());
         }
     }
 }
