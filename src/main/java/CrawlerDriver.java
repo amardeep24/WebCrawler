@@ -5,29 +5,36 @@ import org.jsoup.nodes.Document;
 import org.jsoup.select.Elements;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Properties;
+import java.util.ResourceBundle;
 import java.util.Set;
-import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class CrawlerDriver {
     private final Set<String> linkSet = new ConcurrentSkipListSet<>();
     private final Set<String> visitedLinkSet = new ConcurrentSkipListSet<>();
     private static final Logger LOG = LogManager.getLogger("consoleLogger");
     private static final int MAX_THREADS = Runtime.getRuntime().availableProcessors();
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(MAX_THREADS * 2);
-
+    private static final BlockingQueue workQueue = new LinkedBlockingQueue();
+    private static final ThreadPoolExecutor POOL = new ThreadPoolExecutor(MAX_THREADS, 20,1L,TimeUnit.SECONDS, workQueue);
+    private static final String REPOSITORY_NAME;
+    private static final String USER_NAME;
+    private static final String GITHUB_HOST = "https://github.com";
+    static{
+        Properties props = readDataFromProperties();
+        USER_NAME = props.getProperty("crawler.target.user");
+        REPOSITORY_NAME = props.getProperty("crawler.target.repository");
+    }
     public static void main(String[] args) {
         CrawlerDriver cd = new CrawlerDriver();
-        cd.startCrawling("https://github.com/soumodeep3007/Node-Test");
+        cd.startCrawling(String.format(GITHUB_HOST+"/%s/%s", USER_NAME, REPOSITORY_NAME));
         try{
-            POOL.awaitTermination(1, TimeUnit.MINUTES);
+            await();
             cd.crawlFromLinks();
-            POOL.awaitTermination(1, TimeUnit.MINUTES);
         }catch (InterruptedException ie){
             LOG.error(ie.getMessage());
         }finally {
@@ -40,9 +47,9 @@ public class CrawlerDriver {
     public void startCrawling(String url) {
         Document doc;
         if (!url.startsWith("https://")) {
-            url = "https://github.com" + url;
+            url = GITHUB_HOST + url;
         }
-        if (url != null && url.contains("soumodeep3007") && url.contains("Node-Test") && !visitedLinkSet.contains(url)) {
+        if (url != null && url.contains(USER_NAME) && url.contains(REPOSITORY_NAME) && !visitedLinkSet.contains(url)) {
             try {
                 // need http protocol
                 LOG.info("startCrawling called with url " + url);
@@ -68,9 +75,9 @@ public class CrawlerDriver {
         Elements links = doc.select("a[href]");
         links.forEach(link -> {
             String url = link.attr("href");
-            if (url.contains("soumodeep3007") && url.contains("Node-Test")) {
+            if (url.contains(USER_NAME) && url.contains(REPOSITORY_NAME)) {
                 if (!url.startsWith("https://")) {
-                    url = "https://github.com" + url;
+                    url = GITHUB_HOST + url;
                 }
                 linkSet.add(url);
             }
@@ -99,5 +106,23 @@ public class CrawlerDriver {
         } catch (IOException e) {
            LOG.error(e.getMessage());
         }
+    }
+
+    private static void await() throws InterruptedException{
+        while(POOL.getTaskCount() != POOL.getCompletedTaskCount()){
+            Thread.sleep(5000);
+        }
+    }
+
+    private static Properties readDataFromProperties(){
+        String resourceName = "application.properties";
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        Properties props = new Properties();
+        try(InputStream resourceStream = loader.getResourceAsStream(resourceName)) {
+            props.load(resourceStream);
+        }catch(IOException ioe){
+            LOG.error(ioe.getMessage());
+        }
+        return props;
     }
 }
